@@ -8,6 +8,7 @@ attaching hooks to every notable activation within the model. This enables the i
 alteration of activations in individual components like attention heads and MLP layers, facilitating
 a deeper understanding of the internal workings of transformers like GPT-2.
 """
+
 import logging
 import os
 from typing import Dict, List, NamedTuple, Optional, Tuple, Union, cast, overload
@@ -1059,6 +1060,7 @@ class HookedTransformer(HookedRootModule):
         center_writing_weights: bool = True,
         center_unembed: bool = True,
         refactor_factored_attn_matrices: bool = False,
+        force_load_with_assign: bool = False,
         checkpoint_index: Optional[int] = None,
         checkpoint_value: Optional[int] = None,
         hf_model: Optional[AutoModelForCausalLM] = None,
@@ -1150,6 +1152,8 @@ class HookedTransformer(HookedRootModule):
                 keepdim=True)``.
             refactor_factored_attn_matrices: Whether to convert the factored
                 matrices (W_Q & W_K, and W_O & W_V) to be "even". Defaults to False
+            force_load_with_assign: Whether to load the state dict with
+                `assign=True` if the torch version supports it. Can save on memory.
             checkpoint_index: If loading from a checkpoint, the index of
                 the checkpoint to load.
             checkpoint_value: If loading from a checkpoint, the value of
@@ -1314,6 +1318,7 @@ class HookedTransformer(HookedRootModule):
             center_unembed=center_unembed,
             fold_value_biases=fold_value_biases,
             refactor_factored_attn_matrices=refactor_factored_attn_matrices,
+            force_load_with_assign=force_load_with_assign,
         )
 
         if move_to_device:
@@ -1488,6 +1493,7 @@ class HookedTransformer(HookedRootModule):
         center_unembed: bool = True,
         fold_value_biases: bool = True,
         refactor_factored_attn_matrices: bool = False,
+        force_load_with_assign: bool = False,
     ):
         """Load & Process State Dict.
 
@@ -1514,6 +1520,8 @@ class HookedTransformer(HookedRootModule):
                 make it easier to interpret the head's output.
             refactor_factored_attn_matrices (bool, optional): Whether to convert the factored
                 matrices (W_Q & W_K, and W_O & W_V) to be "even". Defaults to False.
+            force_load_with_assign (bool, optional): Whether to load the state dict with
+                `assign=True` if the torch version supports it. Can save on memory.
             model_name (str, optional): checks the model name for special cases of state dict
                 loading. Only used for Redwood 2L model currently.
         """
@@ -1567,7 +1575,11 @@ class HookedTransformer(HookedRootModule):
         if refactor_factored_attn_matrices:
             state_dict = self.refactor_factored_attn_matrices(state_dict)
 
-        if self.cfg.load_in_4bit:
+        if self.cfg.load_in_4bit or (
+            # Allow users to force `assign` to save memory.
+            force_load_with_assign
+            and version.parse(torch.__version__) >= version.parse("2.1.0")
+        ):
             # with quantization, parameters should be assigned
             # so that quantization settings are not lost
             self.load_state_dict(state_dict, assign=True, strict=False)
